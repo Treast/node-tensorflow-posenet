@@ -1,4 +1,6 @@
 const tf = require('@tensorflow/tfjs');
+const path = require('path');
+const fs = require('fs');
 
 tf.disableDeprecationWarnings();
 
@@ -6,6 +8,7 @@ require('@tensorflow/tfjs-node');
 const NodeWebcam = require('node-webcam');
 const Posenet = require('@tensorflow-models/posenet');
 global.XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;
+const sharp = require('sharp');
 const requestAnimationFrame = require('raf');
 const { createCanvas, Image } = require('canvas');
 
@@ -32,7 +35,7 @@ const initWebcam = () => {
     webcam = NodeWebcam.create({
       width: webcamConfiguration.width,
       height: webcamConfiguration.height,
-      output: 'jpeg',
+      output: 'png',
       callbackReturn: 'base64',
     });
     console.log('Webcam resolved');
@@ -54,24 +57,44 @@ const initModel = () => {
   });
 };
 
-const getHand = (data) => {
+const getHand = (base64) => {
   return new Promise((resolve, reject) => {
-    posenet
-      .estimateSinglePose(data, posenetConfiguration.imageScaleFactor, posenetConfiguration.reversed, posenetConfiguration.outputStride)
-      .then((pose) => {
-        const handKeyPoints = pose.keypoints.filter((item) => {
-          return item.part === 'rightWrist' || item.part === 'leftWrist';
-        });
+    const base = base64.replace('data:image/png;base64,', '');
+    const inputImage = sharp(Buffer.from(base, 'base64'), { failOnError: true });
+    inputImage.metadata().then((m) => {
+      const imageFormat = [m.width, m.height];
+      const imageSize = Math.max(...imageFormat);
 
-        handKeyPoints.sort((a, b) => {
-          return a.score > b.score ? 1 : -1;
-        });
+      const sharpImage = inputImage.resize(imageSize, imageSize, { fit: 'contain', position: 'top' });
 
-        resolve(this.getPartLocation(handKeyPoints[0]));
-      })
-      .catch((err) => {
-        reject(err);
-      });
+      sharpImage
+        .raw()
+        .toBuffer({ resolveWithObject: true })
+        .then((raw) => {
+          const imageTensor = tf.tensor3d(raw.data, [raw.info.width, raw.info.height, raw.info.channels]);
+          posenet
+            .estimateSinglePose(
+              imageTensor,
+              posenetConfiguration.imageScaleFactor,
+              posenetConfiguration.reversed,
+              posenetConfiguration.outputStride,
+            )
+            .then((pose) => {
+              const handKeyPoints = pose.keypoints.filter((item) => {
+                return item.part === 'rightWrist' || item.part === 'leftWrist';
+              });
+
+              handKeyPoints.sort((a, b) => {
+                return a.score > b.score ? 1 : -1;
+              });
+
+              resolve(this.getPartLocation(handKeyPoints[0]));
+            })
+            .catch((err) => {
+              reject(err);
+            });
+        });
+    });
   });
 };
 
@@ -79,7 +102,6 @@ const loadImage = (base64) => {
   return new Promise((resolve) => {
     const image = new Image();
     image.onload = () => {
-      ctx.drawImage(image, 0, 0);
       resolve(image);
     };
     image.onerror = (err) => {
@@ -96,15 +118,17 @@ const render = () => {
       console.error(err);
       return false;
     }
+    getHand(data).then((hand) => {
+      console.log(hand.position);
+      requestAnimationFrame(render());
+    });
 
-    loadImage(data).then((image) => {
-      const tfImage = tf.browser.fromPixels(canvas, 3);
-
-      getHand(tfImage).then((hand) => {
+    /* loadImage(data).then((image) => {
+      getHand(image).then((hand) => {
         console.log(hand.position);
         requestAnimationFrame(render());
       });
-    });
+    }); */
   });
 };
 
