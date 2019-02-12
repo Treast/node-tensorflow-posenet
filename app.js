@@ -16,15 +16,23 @@ const posenetConfiguration = {
   reversed: false,
 };
 
-const canvas = createCanvas(1920, 1080);
+const webcamConfiguration = {
+  width: 1280,
+  height: 720,
+};
+
+const canvas = createCanvas(webcamConfiguration.width, webcamConfiguration.height);
 const ctx = canvas.getContext('2d');
 
 let webcam = null;
-let net = null;
+let posenet = null;
 
 const initWebcam = () => {
   return new Promise((resolve) => {
     webcam = NodeWebcam.create({
+      width: webcamConfiguration.width,
+      height: webcamConfiguration.height,
+      output: 'jpeg',
       callbackReturn: 'base64',
     });
     console.log('Webcam resolved');
@@ -35,8 +43,8 @@ const initWebcam = () => {
 const initModel = () => {
   return new Promise((resolve, reject) => {
     Posenet.load(posenetConfiguration.multiplier)
-      .then((posenet) => {
-        net = posenet;
+      .then((posenetModel) => {
+        posenet = posenetModel;
         console.log('Posenet resolved');
         resolve();
       })
@@ -48,8 +56,8 @@ const initModel = () => {
 
 const getHand = (data) => {
   return new Promise((resolve, reject) => {
-    net
-      .estimateSinglePose(canvas, posenetConfiguration.imageScaleFactor, posenetConfiguration.reversed, posenetConfiguration.outputStride)
+    posenet
+      .estimateSinglePose(data, posenetConfiguration.imageScaleFactor, posenetConfiguration.reversed, posenetConfiguration.outputStride)
       .then((pose) => {
         const handKeyPoints = pose.keypoints.filter((item) => {
           return item.part === 'rightWrist' || item.part === 'leftWrist';
@@ -71,7 +79,7 @@ const loadImage = (base64) => {
   return new Promise((resolve) => {
     const image = new Image();
     image.onload = () => {
-      ctx.drawImage(image, 0, 0, 1920, 1080);
+      ctx.drawImage(image, 0, 0);
       resolve(image);
     };
     image.onerror = (err) => {
@@ -90,9 +98,9 @@ const render = () => {
     }
 
     loadImage(data).then((image) => {
-      // const tfImage = tf.browser.fromPixels(canvas);
+      const tfImage = tf.browser.fromPixels(canvas, 3);
 
-      getHand(canvas).then((hand) => {
+      getHand(tfImage).then((hand) => {
         console.log(hand.position);
         requestAnimationFrame(render());
       });
